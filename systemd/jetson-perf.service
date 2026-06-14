@@ -1,0 +1,14 @@
+# Lock Jetson ke performa maksimum (Addendum §1).
+# Pasang: sudo cp jetson-perf.service /etc/systemd/system/ && sudo systemctl enable --now jetson-perf
+[Unit]
+Description=Lock Jetson to max performance
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nvpmodel -m 0
+ExecStart=/usr/bin/jetson_clocks
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+# Backend dashboard. Mulai setelah go2rtc agar rekonsiliasi stream berhasil.
+[Unit]
+Description=HLS Gateway Dashboard Backend
+After=go2rtc.service
+Wants=go2rtc.service
+
+[Service]
+WorkingDirectory=/opt/hls-gateway
+Environment=DB_PATH=/opt/hls-gateway/data/gateway.db
+Environment=G2R_API_URL=http://localhost:1984
+# RTSP_HOST = IP/hostname Jetson yang dipakai konsumen untuk menyusun URL RTSP.
+Environment=RTSP_HOST=127.0.0.1
+ExecStart=/opt/hls-gateway/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+# go2rtc â€” RTSP server pengganti MediaMTX.
+# Alasan ganti: MediaMTX menimbulkan lonjakan play-time 13-16 detik yang acak
+# (klien/VMS gagal connect). go2rtc terbukti konsisten ~150 ms pada sumber sama.
+#
+# Stream ditambahkan DINAMIS oleh backend via HTTP API:
+#   PUT    /api/streams?name=<nama>&src=<source>
+#   DELETE /api/streams?src=<nama>
+#   GET    /api/streams
+#
+# Source string per-stream mereferensikan TEMPLATE di bawah (bukan flag inline),
+# karena go2rtc menolak source string ber-spasi via API ("insecure").
+
+log:
+  level: info
+
+api:
+  listen: ":1984"        # HTTP API + web UI (http://host:1984)
+
+rtsp:
+  listen: ":8554"        # RTSP konsumen, path-based: rtsp://host:8554/<nama>
+
+webrtc:
+  listen: ":8555"        # opsional (preview WebRTC dashboard nanti)
+
+ffmpeg:
+  bin: ffmpeg
+  # Template INPUT (flag sebelum -i): anti-buffer & reconnect berlapis (mode stabil).
+  # {input} diganti URL HLS oleh go2rtc.
+  hlslive: "-rw_timeout 30000000 -reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx -reconnect_delay_max 30 -m3u8_hold_counters 60 -max_reload 1000 -fflags +genpts -i {input}"
+  # Template INPUT varian low-latency (ikuti live-edge + reconnect_at_eof).
+  hlslowlat: "-rw_timeout 30000000 -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_delay_max 30 -live_start_index -1 -m3u8_hold_counters 60 -max_reload 1000 -fflags +genpts -i {input}"
+  # Template OUTPUT fast-start (keyframe tiap 1 dtk) â€” encoder SOFTWARE (laptop x86).
+  faststart_sw: "-c:v libx264 -preset veryfast -tune zerolatency -profile:v high -g 30 -force_key_frames expr:gte(t,n_forced*1) -b:v 2M"
+  # Template OUTPUT fast-start â€” encoder HARDWARE Jetson (NVENC). Pakai di J4011.
+  faststart_hw: "-c:v h264_nvmpi -profile:v high -g 30 -force_key_frames expr:gte(t,n_forced*1) -b:v 4M"
+
+# streams: (kosong â€” diisi runtime oleh backend)
+streams:
+  admin2:
+    - ffmpeg:https://eofficev2.bekasikota.go.id/backupcctv/m3/Perempatan_Rawa_Semut.m3u8#input=hlslive#video=copy#audio=aac

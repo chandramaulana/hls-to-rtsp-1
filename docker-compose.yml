@@ -1,0 +1,35 @@
+# Dev stack untuk coba di laptop (Windows + Docker Desktop).
+# RTSP server: go2rtc (pengganti MediaMTX — play time konsisten ~150ms, tanpa
+# lonjakan belasan detik). Mode COPY & fast-start/transcode (libx264 fallback)
+# berfungsi di laptop; transcode HARDWARE (nvmpi) hanya di Jetson.
+
+services:
+  go2rtc:
+    image: alexxit/go2rtc:latest   # sudah menyertakan ffmpeg
+    container_name: go2rtc
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      # Writable: go2rtc menyimpan stream yang ditambah via API ke file ini
+      # (sekaligus memberi persistensi config). Template tetap di file yang sama.
+      - ./config/go2rtc.yaml:/config/go2rtc.yaml
+    # Catatan: network_mode host di Docker Desktop Windows/Mac terbatas.
+    # Lihat docker-compose.windows.yml untuk profil 'bridge'.
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hls-gateway-api
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - go2rtc
+    environment:
+      G2R_API_URL: http://localhost:1984
+      RTSP_HOST: 127.0.0.1        # ganti ke IP laptop untuk akses RTSP dari perangkat lain
+      RTSP_PORT: "8554"
+      DB_PATH: /app/data/gateway.db
+      WATCHDOG_ENABLED: "1"
+    volumes:
+      - ./data:/app/data

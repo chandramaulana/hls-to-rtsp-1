@@ -1,0 +1,15 @@
+# go2rtc RTSP Gateway (pengganti MediaMTX). Restart=always + mulai setelah perf siap.
+# Pasang binary go2rtc arm64 ke /usr/local/bin/go2rtc, config ke /usr/local/etc/go2rtc.yaml.
+[Unit]
+Description=go2rtc RTSP Gateway
+After=network-online.target jetson-perf.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/go2rtc -config /usr/local/etc/go2rtc.yaml
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

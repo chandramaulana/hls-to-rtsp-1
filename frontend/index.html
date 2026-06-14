@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HLS → RTSP Gateway</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">▣</span>
+      <div>
+        <h1>HLS → RTSP GATEWAY</h1>
+        <span class="sub">STREAM MANAGEMENT</span>
+      </div>
+    </div>
+    <div class="health">
+      <span id="healthDot" class="dot"></span>
+      <span id="healthText">CHECKING…</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- TAMBAH SUMBER — form sederhana (2 field utama) -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>TAMBAH SUMBER</h2>
+      </div>
+      <form id="addForm" class="add-form">
+        <div class="field">
+          <label for="f-name">NAMA</label>
+          <input id="f-name" name="name" placeholder="cam_lobby" required autocomplete="off"
+                 pattern="[a-z0-9][a-z0-9_\-]{0,62}" title="huruf kecil / angka / _ / -" />
+        </div>
+        <div class="field grow">
+          <label for="f-url">URL HLS</label>
+          <input id="f-url" name="hls_url" type="url" placeholder="https://sumber/playlist.m3u8" required autocomplete="off" />
+        </div>
+        <button type="submit" class="btn btn-primary">TAMBAH</button>
+        <button type="button" class="btn btn-ghost" id="advToggle">OPSI LANJUTAN</button>
+      </form>
+      <!-- opsi lanjutan dalam panel form (hidden by default) -->
+      <div id="advBox" class="adv-box" hidden>
+        <div class="field">
+          <label>MODE</label>
+          <select id="f-mode">
+            <option value="auto">auto (deteksi codec)</option>
+            <option value="copy">copy (passthrough)</option>
+            <option value="transcode">transcode → H.264</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>AUDIO</label>
+          <select id="f-audio">
+            <option value="aac">aac</option>
+            <option value="copy">copy</option>
+            <option value="drop">drop (tanpa audio)</option>
+          </select>
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="f-fast" />
+          <span style="font-size:11px; color:var(--text);">FAST START <em style="color:var(--dim); font-style:normal; font-size:10px;">(instant play)</em></span>
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="f-lowlat" />
+          <span style="font-size:11px; color:var(--text);">LOW LATENCY <em style="color:var(--dim); font-style:normal; font-size:10px;">(live-edge)</em></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- DAFTAR SUMBER -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>DAFTAR SUMBER <span id="count" class="count">0</span></h2>
+        <label class="auto"><input type="checkbox" id="autoRefresh" checked /> AUTO-REFRESH</label>
+      </div>
+      <div class="table-wrap">
+        <table id="srcTable">
+          <thead>
+            <tr>
+              <th>NAMA</th><th>STATUS</th><th>CODEC</th><th>MODE</th>
+              <th>RTSP URL</th><th class="num">VIEWERS</th><th>AKSI</th>
+            </tr>
+          </thead>
+          <tbody id="srcBody">
+            <tr><td colspan="7" class="empty">Memuat…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL -->
+  <div id="modalOverlay" class="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span id="modalIcon" class="modal-icon"></span>
+        <h3 id="modalTitle">Judul</h3>
+        <button class="modal-x" id="modalClose" aria-label="tutup">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+      <div id="modalFoot" class="modal-foot"></div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

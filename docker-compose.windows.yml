@@ -1,0 +1,34 @@
+# Override untuk Docker Desktop di Windows/Mac (host networking tidak didukung penuh).
+# Pakai jaringan bridge + port mapping.
+#
+# Jalankan:
+#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
+#
+# Buka dashboard: http://localhost:8080
+# URL RTSP yang dipakai konsumen di laptop: rtsp://localhost:8554/<nama>
+# go2rtc web UI (opsional, debug): http://localhost:1984
+
+services:
+  go2rtc:
+    network_mode: ""            # batalkan host mode dari file dasar
+    networks: [gw]
+    ports:
+      - "8554:8554"            # RTSP
+      - "1984:1984"            # API + web UI
+      - "8555:8555"            # WebRTC (opsional)
+
+  api:
+    network_mode: ""
+    networks: [gw]
+    ports:
+      - "8080:8080"           # dashboard
+    environment:
+      G2R_API_URL: http://go2rtc:1984
+      RTSP_HOST: localhost          # ditampilkan ke operator (konsumen di laptop)
+      RTSP_PORT: "8554"
+      DB_PATH: /app/data/gateway.db
+      WATCHDOG_ENABLED: "1"
+
+networks:
+  gw:
+    driver: bridge
