@@ -1,17 +1,7 @@
 """Bangun 'source string' go2rtc untuk tiap stream.
 
-go2rtc memakai sintaks sumber ringkas:  ffmpeg:<INPUT>#<modul>=<param>#...
-Karena go2rtc menolak source string ber-SPASI via API ("insecure"), semua flag
-kompleks didefinisikan sebagai TEMPLATE di config/go2rtc.yaml dan di sini hanya
-dirujuk namanya:
-  #input=hlslive | hlslowlat     → flag FFmpeg sebelum -i (lihat go2rtc.yaml)
-  #video=copy                    → passthrough (mode COPY, paling ringan)
-  #raw=faststart_sw | faststart_hw → re-encode GOP pendek (transcode / fast-start)
-  #audio=copy | aac | drop
-
-Catatan bitrate: bila perlu bitrate kustom, itu sudah termasuk di template
-faststart_* (default 2M sw / 4M hw). Bitrate per-stream dinamis tidak didukung
-lewat template; ubah template bila butuh nilai lain.
+Untuk HLS/YouTube: gunakan ffmpeg: dengan #input=hlslive template.
+Untuk file MP4: gunakan exec: dengan command FFmpeg langsung (stream_loop -1).
 """
 from __future__ import annotations
 
@@ -21,7 +11,7 @@ from functools import lru_cache
 
 @lru_cache(maxsize=1)
 def has_hw_encoder() -> bool:
-    """True bila ffmpeg punya encoder hardware Jetson (h264_nvmpi) → pilih template HW."""
+    """True bila ffmpeg punya encoder hardware Jetson (h264_nvmpi) -> pilih template HW."""
     try:
         out = subprocess.run(
             ["ffmpeg", "-hide_banner", "-encoders"],
@@ -37,25 +27,28 @@ def build_source(
     hls_url: str,
     active_mode: str,
     audio: str,
+    source_type: str = "hls",
     low_latency: bool = False,
     fast_start: bool = False,
 ) -> str:
-    """Kembalikan string source go2rtc untuk satu stream (tanpa spasi)."""
-    parts = [f"ffmpeg:{hls_url}"]
-    parts.append(f"#input={'hlslowlat' if low_latency else 'hlslive'}")
+    """Kembalikan string source go2rtc untuk satu stream."""
+
+    # Untuk file MP4: ffmpeg: langsung tanpa #input (stream sekali, restart on-demand)
+    if source_type == "file":
+        return "ffmpeg:" + hls_url + "#video=copy#audio=" + audio
+
+    # Untuk HLS / YouTube: gunakan ffmpeg: dengan template
+    parts = ["ffmpeg:" + hls_url]
+    parts.append("#input=" + ("hlslowlat" if low_latency else "hlslive"))
 
     if active_mode == "transcode" or fast_start:
-        parts.append(f"#raw={'faststart_hw' if has_hw_encoder() else 'faststart_sw'}")
+        parts.append("#raw=" + ("faststart_hw" if has_hw_encoder() else "faststart_sw"))
     else:
         parts.append("#video=copy")
 
-    # CATATAN go2rtc: TIDAK ada nilai "#audio=drop". Untuk membuang audio, JANGAN
-    # kirim modifier #audio= sama sekali (go2rtc menafsirkan 'drop' sebagai nama file
-    # output → "Unable to choose output format for 'drop'" → stream 404).
     if audio == "copy":
         parts.append("#audio=copy")
     elif audio == "aac":
         parts.append("#audio=aac")
-    # audio == "drop": tidak menambahkan apa pun (video-only)
 
     return "".join(parts)

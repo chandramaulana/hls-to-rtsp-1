@@ -1,23 +1,25 @@
 """Logika inti: gabungkan DB + ffprobe + builder source + go2rtc menjadi operasi sumber.
 
-DB = sumber kebenaran konfigurasi. go2rtc = RTSP server + orchestrator (on-demand).
-Rekonsiliasi saat startup memastikan pemulihan total setelah reboot.
-
-Catatan model go2rtc: stream bersifat ON-DEMAND — producer (FFmpeg) baru jalan saat
-ada consumer pertama, lalu idle saat tidak ada penonton. Karena itu "status" di sini
-berarti "terdaftar & siap" (bukan "byte sedang mengalir"). go2rtc mengelola lifecycle
-& restart producer sendiri, jadi tak perlu watchdog byte-stagnan seperti pada MediaMTX.
+Mendukung 3 jenis sumber:
+- hls: URL HLS (.m3u8) biasa
+- youtube: URL YouTube (auto-resolve ke HLS via yt-dlp)
+- file: file MP4 yang diupload (looping via go2rtc fileloop template)
 """
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import database as db
 from . import ffmpeg_cmd, go2rtc, probe
+from . import ytstream as ytstream_mod
 from .config import settings
-from .models import SourceCreate, SourceOut, SourceUpdate, Status
+from .models import SourceCreate, SourceOut, SourceUpdate, Status, SourceType
+
+log = logging.getLogger("gateway")
 
 
 class ConflictError(RuntimeError):
@@ -45,13 +47,23 @@ def _build_src(row: dict[str, Any]) -> str:
         hls_url=row["hls_url"],
         active_mode=row["active_mode"] or "copy",
         audio=row.get("audio", "aac"),
+        source_type=row.get("source_type", "hls"),
         low_latency=bool(row.get("low_latency", 0)),
         fast_start=bool(row.get("fast_start", 0)),
     )
 
 
+async def _resolve_youtube_url(url: str) -> tuple[str, Optional[str]]:
+    if not ytstream_mod.is_youtube_url(url):
+        return url, None
+    try:
+        resolved = await ytstream_mod.resolve_stream_url(url)
+        return resolved, url
+    except RuntimeError:
+        return url, url
+
+
 def _count_active_transcode(exclude_id: Optional[str] = None) -> int:
-    """Hitung stream yang membebani encoder (transcode ATAU fast_start = re-encode)."""
     n = 0
     for r in db.list_all():
         if r["id"] == exclude_id or not r["enabled"]:
@@ -65,14 +77,83 @@ def _is_encode(row: dict[str, Any]) -> bool:
     return (row.get("active_mode") == "transcode") or bool(row.get("fast_start"))
 
 
+def _get_file_name(file_path: Optional[str]) -> Optional[str]:
+    """Ambil nama file asli dari path (untuk display)."""
+    if not file_path:
+        return None
+    return os.path.basename(file_path)
+
+
 async def create_source(payload: SourceCreate) -> SourceOut:
     if db.get_by_name(payload.name):
         raise ConflictError(f"nama '{payload.name}' sudah dipakai")
 
+    hls_url = payload.hls_url
+    original_url = payload.original_url
+    source_type = payload.source_type.value if hasattr(payload.source_type, "value") else payload.source_type
+    file_path = payload.file_path
+
+    # --- File source: langsung pakai path file, skip ffprobe (file lokal) ---
+    if source_type == "file":
+        source_codec, width, height = None, None, None
+        if not file_path or not os.path.isfile(file_path):
+            raise RuntimeError(f"file tidak ditemukan: {file_path}")
+        # Probe file untuk metadata
+        try:
+            res = await probe.probe(file_path)
+            source_codec, width, height = res.codec, res.width, res.height
+        except RuntimeError as e:
+            log.warning("file probe gagal: %s", e)
+
+        active_mode = probe.decide_mode(payload.mode.value, source_codec)
+
+        row_preview = {"active_mode": active_mode, "fast_start": 1 if payload.fast_start else 0}
+        if _is_encode(row_preview) and _count_active_transcode() >= settings.MAX_TRANSCODE:
+            raise CapacityError(
+                f"batas konkurensi encode tercapai ({settings.MAX_TRANSCODE})"
+            )
+
+        sid = str(uuid.uuid4())
+        row = {
+            "id": sid,
+            "name": payload.name,
+            "hls_url": file_path,
+            "original_url": None,
+            "source_type": "file",
+            "file_path": file_path,
+            "mode": payload.mode.value,
+            "active_mode": active_mode,
+            "bitrate": payload.bitrate,
+            "audio": payload.audio.value,
+            "rtsp_transport": payload.rtsp_transport.value,
+            "low_latency": 1 if payload.low_latency else 0,
+            "fast_start": 1 if payload.fast_start else 0,
+            "source_codec": source_codec,
+            "width": width,
+            "height": height,
+            "last_error": None,
+            "enabled": 1,
+            "created_at": _now(),
+        }
+        db.insert(row)
+        try:
+            await go2rtc.add_stream(payload.name, _build_src(row))
+        except go2rtc.Go2rtcError as e:
+            db.update(sid, {"last_error": f"go2rtc: {e}"})
+        return await get_source(sid)
+
+    # --- HLS / YouTube source (existing logic) ---
+    if ytstream_mod.is_youtube_url(hls_url):
+        try:
+            resolved, original_url = await _resolve_youtube_url(hls_url)
+            hls_url = resolved
+        except RuntimeError:
+            pass
+
     source_codec = width = height = None
     last_error: Optional[str] = None
     try:
-        res = await probe.probe(payload.hls_url)
+        res = await probe.probe(hls_url)
         source_codec, width, height = res.codec, res.width, res.height
     except RuntimeError as e:
         last_error = f"ffprobe: {e}"
@@ -82,15 +163,17 @@ async def create_source(payload: SourceCreate) -> SourceOut:
     row_preview = {"active_mode": active_mode, "fast_start": 1 if payload.fast_start else 0}
     if _is_encode(row_preview) and _count_active_transcode() >= settings.MAX_TRANSCODE:
         raise CapacityError(
-            f"batas konkurensi encode tercapai ({settings.MAX_TRANSCODE}); "
-            "tolak untuk hindari overload encoder"
+            f"batas konkurensi encode tercapai ({settings.MAX_TRANSCODE})"
         )
 
     sid = str(uuid.uuid4())
     row = {
         "id": sid,
         "name": payload.name,
-        "hls_url": payload.hls_url,
+        "hls_url": hls_url,
+        "original_url": original_url,
+        "source_type": "hls",
+        "file_path": None,
         "mode": payload.mode.value,
         "active_mode": active_mode,
         "bitrate": payload.bitrate,
@@ -127,6 +210,13 @@ async def update_source(id: str, payload: SourceUpdate) -> SourceOut:
     changed: dict[str, Any] = {}
     if payload.hls_url is not None:
         changed["hls_url"] = payload.hls_url
+    if payload.original_url is not None:
+        changed["original_url"] = payload.original_url
+    if payload.source_type is not None:
+        st = payload.source_type.value if hasattr(payload.source_type, "value") else payload.source_type
+        changed["source_type"] = st
+    if payload.file_path is not None:
+        changed["file_path"] = payload.file_path
     if payload.bitrate is not None:
         changed["bitrate"] = payload.bitrate
     if payload.audio is not None:
@@ -141,10 +231,26 @@ async def update_source(id: str, payload: SourceUpdate) -> SourceOut:
         changed["mode"] = payload.mode.value
 
     merged = {**d, **changed}
+    need_reprobe = False
 
-    if payload.hls_url is not None or payload.mode is not None:
+    if payload.hls_url is not None:
+        need_reprobe = True
+        if ytstream_mod.is_youtube_url(changed["hls_url"]):
+            try:
+                resolved, orig = await _resolve_youtube_url(changed["hls_url"])
+                changed["hls_url"] = resolved
+                changed["original_url"] = orig
+                merged.update(changed)
+            except RuntimeError as e:
+                changed["last_error"] = f"yt-dlp: {e}"
+
+    if payload.mode is not None:
+        need_reprobe = True
+
+    if need_reprobe:
+        target_url = merged["hls_url"]
         try:
-            res = await probe.probe(merged["hls_url"])
+            res = await probe.probe(target_url)
             changed["source_codec"] = res.codec
             changed["width"] = res.width
             changed["height"] = res.height
@@ -164,7 +270,7 @@ async def update_source(id: str, payload: SourceUpdate) -> SourceOut:
     final = dict(db.get(id))
     if final["enabled"]:
         try:
-            await go2rtc.add_stream(final["name"], _build_src(final))  # PUT = replace
+            await go2rtc.add_stream(final["name"], _build_src(final))
         except go2rtc.Go2rtcError as e:
             db.update(id, {"last_error": f"go2rtc: {e}"})
 
@@ -177,6 +283,16 @@ async def restart_source(id: str) -> SourceOut:
         raise NotFoundError(id)
     db.update(id, {"enabled": 1})
     final = dict(db.get(id))
+
+    # Refresh YouTube URL jika perlu
+    if final.get("original_url") and ytstream_mod.is_youtube_url(final["original_url"]):
+        try:
+            resolved, _ = await _resolve_youtube_url(final["original_url"])
+            db.update(id, {"hls_url": resolved, "last_error": None})
+            final["hls_url"] = resolved
+        except RuntimeError as e:
+            db.update(id, {"last_error": f"yt-dlp refresh: {e}"})
+
     await go2rtc.delete_stream(final["name"])
     await go2rtc.add_stream(final["name"], _build_src(final))
     db.update(id, {"last_error": None})
@@ -196,7 +312,18 @@ async def delete_source(id: str) -> None:
     row = db.get(id)
     if not row:
         raise NotFoundError(id)
-    await go2rtc.delete_stream(row["name"])
+    rdict = dict(row)
+    await go2rtc.delete_stream(rdict["name"])
+
+    # Hapus file fisik jika file source
+    fpath = rdict.get("file_path")
+    if fpath and os.path.isfile(fpath):
+        try:
+            os.remove(fpath)
+            log.info("file dihapus: %s", fpath)
+        except OSError as e:
+            log.warning("gagal hapus file %s: %s", fpath, e)
+
     db.delete(id)
 
 
@@ -206,9 +333,7 @@ def _status_from_runtime(row: dict[str, Any], rt: Optional[dict[str, Any]]) -> S
     if row.get("last_error"):
         return Status.error
     if rt is None:
-        # terdaftar di DB tapi belum ada di go2rtc → sedang/akan ditambahkan
         return Status.connecting
-    # Terdaftar di go2rtc. On-demand: dianggap ready (siap melayani saat di-play).
     return Status.ready
 
 
@@ -224,6 +349,10 @@ def _to_out(row: dict[str, Any], rt: Optional[dict[str, Any]]) -> SourceOut:
         id=row["id"],
         name=row["name"],
         hls_url=row["hls_url"],
+        original_url=row.get("original_url"),
+        source_type=SourceType(row.get("source_type", "hls")),
+        file_path=row.get("file_path"),
+        file_name=_get_file_name(row.get("file_path")),
         mode=row["mode"],
         active_mode=row.get("active_mode"),
         bitrate=row.get("bitrate"),
@@ -238,7 +367,7 @@ def _to_out(row: dict[str, Any], rt: Optional[dict[str, Any]]) -> SourceOut:
         last_error=row.get("last_error"),
         rtsp_url=_rtsp_url(row["name"]),
         ready=rt is not None and not row.get("last_error") and bool(row["enabled"]),
-        bytes_received=0,  # go2rtc on-demand: tidak ada byte saat idle (bukan indikator sehat)
+        bytes_received=0,
         readers=_readers(rt),
         created_at=row["created_at"],
     )
@@ -264,7 +393,6 @@ async def list_sources() -> list[SourceOut]:
 
 
 async def reconcile() -> None:
-    """Saat startup: pastikan tiap sumber enabled terdaftar di go2rtc (re-add bila hilang)."""
     try:
         existing = await go2rtc.list_streams()
     except go2rtc.Go2rtcError:

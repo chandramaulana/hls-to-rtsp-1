@@ -13,6 +13,7 @@ services:
       # Writable: go2rtc menyimpan stream yang ditambah via API ke file ini
       # (sekaligus memberi persistensi config). Template tetap di file yang sama.
       - ./config/go2rtc.yaml:/config/go2rtc.yaml
+      - ./uploads:/app/uploads:ro
     # Catatan: network_mode host di Docker Desktop Windows/Mac terbatas.
     # Lihat docker-compose.windows.yml untuk profil 'bridge'.
 
@@ -27,9 +28,11 @@ services:
       - go2rtc
     environment:
       G2R_API_URL: http://localhost:1984
-      RTSP_HOST: 127.0.0.1        # ganti ke IP laptop untuk akses RTSP dari perangkat lain
+      RTSP_HOST: 103.59.161.120
       RTSP_PORT: "8554"
       DB_PATH: /app/data/gateway.db
       WATCHDOG_ENABLED: "1"
+      UPLOADS_DIR: /app/uploads
     volumes:
       - ./data:/app/data
+      - ./uploads:/app/uploads

@@ -3,16 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HLS → RTSP Gateway</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>Any to RTSP</title>
+  <link rel="stylesheet" href="/style.css?v=3" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>⟳</text></svg>" />
 </head>
 <body>
   <header>
     <div class="brand">
-      <span class="logo">▣</span>
+      <span class="logo">⟳</span>
       <div>
-        <h1>HLS → RTSP GATEWAY</h1>
-        <span class="sub">STREAM MANAGEMENT</span>
+        <h1>ANY TO RTSP</h1>
+        <span class="sub">STREAM CONVERTER <span style="background:#e0a526;color:#0a0c10;padding:2px 6px;font-size:10px;margin-left:8px;">DEV</span></span>
       </div>
     </div>
     <div class="health">
@@ -22,74 +23,150 @@
   </header>
 
   <main>
-    <!-- TAMBAH SUMBER — form sederhana (2 field utama) -->
+    <!-- ADD SOURCE -->
     <section class="panel">
       <div class="panel-head">
-        <h2>TAMBAH SUMBER</h2>
+        <h2>ADD SOURCE</h2>
       </div>
-      <form id="addForm" class="add-form">
+
+      <!-- Step 1: Pilih tipe sumber -->
+      <div class="src-type-picker">
+        <button class="src-type-btn" data-type="hls">
+          <span class="st-icon">📡</span>
+          <span class="st-label">HLS</span>
+          <span class="st-desc">CCTV Link / M3U8</span>
+        </button>
+        <button class="src-type-btn" data-type="youtube">
+          <span class="st-icon">▶</span>
+          <span class="st-label">YouTube</span>
+          <span class="st-desc">Live Stream URL</span>
+        </button>
+        <button class="src-type-btn" data-type="mp4">
+          <span class="st-icon">📁</span>
+          <span class="st-label">MP4 File</span>
+          <span class="st-desc">Upload & Loop</span>
+        </button>
+      </div>
+
+      <!-- Step 2: Form sesuai tipe -->
+      <!-- HLS -->
+      <form id="formHls" class="add-form src-form" data-type="hls" hidden>
         <div class="field">
-          <label for="f-name">NAMA</label>
-          <input id="f-name" name="name" placeholder="cam_lobby" required autocomplete="off"
+          <label for="hls-name">NAME</label>
+          <input id="hls-name" name="name" placeholder="cam_lobby" required autocomplete="off"
                  pattern="[a-z0-9][a-z0-9_\-]{0,62}" title="huruf kecil / angka / _ / -" />
         </div>
         <div class="field grow">
-          <label for="f-url">URL HLS</label>
-          <input id="f-url" name="hls_url" type="url" placeholder="https://sumber/playlist.m3u8" required autocomplete="off" />
+          <label for="hls-url">HLS URL</label>
+          <input id="hls-url" name="hls_url" type="url" placeholder="https://sumber/playlist.m3u8" required autocomplete="off" />
         </div>
-        <button type="submit" class="btn btn-primary">TAMBAH</button>
-        <button type="button" class="btn btn-ghost" id="advToggle">OPSI LANJUTAN</button>
+        <button type="submit" class="btn btn-primary">ADD</button>
+        <button type="button" class="btn btn-ghost adv-toggle">ADVANCED</button>
       </form>
-      <!-- opsi lanjutan dalam panel form (hidden by default) -->
-      <div id="advBox" class="adv-box" hidden>
+
+      <!-- YouTube -->
+      <form id="formYt" class="add-form src-form" data-type="youtube" hidden>
+        <div class="field">
+          <label for="yt-name">NAME</label>
+          <input id="yt-name" name="name" placeholder="puncak_live" required autocomplete="off"
+                 pattern="[a-z0-9][a-z0-9_\-]{0,62}" title="huruf kecil / angka / _ / -" />
+        </div>
+        <div class="field grow">
+          <label for="yt-url">YOUTUBE LIVE URL</label>
+          <input id="yt-url" name="yt_url" type="url" placeholder="https://www.youtube.com/watch?v=..." required autocomplete="off" />
+        </div>
+        <button type="submit" class="btn btn-primary">ADD</button>
+        <button type="button" class="btn btn-ghost adv-toggle">ADVANCED</button>
+      </form>
+
+      <!-- MP4 -->
+      <div class="add-form src-form" data-type="mp4" hidden>
+        <div class="field">
+          <label for="mp4-name">NAME</label>
+          <input id="mp4-name" name="name" placeholder="video_loop" required
+                 pattern="[a-z0-9][a-z0-9_\-]{0,62}" title="huruf kecil / angka / _ / -" />
+        </div>
+        <div class="field dropzone" id="dropzone">
+          <label>MP4 FILE (max 50MB)</label>
+          <input type="file" id="mp4-file" accept=".mp4,.mov,.avi,.mkv,.ts" />
+          <span class="dz-hint" id="dzHint">Select file or drag & drop</span>
+          <span class="dz-name" id="dzName" hidden></span>
+        </div>
+        <button type="button" class="btn btn-primary" id="btnUploadMp4">UPLOAD & ADD</button>
+        <button type="button" class="btn btn-ghost adv-toggle">ADVANCED</button>
+      </div>
+
+      <!-- Opsi lanjutan (shared) -->
+      <div class="adv-box" hidden>
         <div class="field">
           <label>MODE</label>
-          <select id="f-mode">
-            <option value="auto">auto (deteksi codec)</option>
+          <select class="f-mode">
+            <option value="auto">auto (detect codec)</option>
             <option value="copy">copy (passthrough)</option>
             <option value="transcode">transcode → H.264</option>
           </select>
         </div>
         <div class="field">
           <label>AUDIO</label>
-          <select id="f-audio">
+          <select class="f-audio">
             <option value="aac">aac</option>
             <option value="copy">copy</option>
-            <option value="drop">drop (tanpa audio)</option>
+            <option value="drop">drop (no audio)</option>
           </select>
         </div>
         <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-          <input type="checkbox" id="f-fast" />
+          <input type="checkbox" class="f-fast" />
           <span style="font-size:11px; color:var(--text);">FAST START <em style="color:var(--dim); font-style:normal; font-size:10px;">(instant play)</em></span>
         </label>
         <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-          <input type="checkbox" id="f-lowlat" />
+          <input type="checkbox" class="f-lowlat" />
           <span style="font-size:11px; color:var(--text);">LOW LATENCY <em style="color:var(--dim); font-style:normal; font-size:10px;">(live-edge)</em></span>
         </label>
       </div>
     </section>
 
-    <!-- DAFTAR SUMBER -->
+    <!-- SOURCE LIST -->
     <section class="panel">
       <div class="panel-head">
-        <h2>DAFTAR SUMBER <span id="count" class="count">0</span></h2>
+        <h2>SOURCE LIST <span id="count" class="count">0</span></h2>
         <label class="auto"><input type="checkbox" id="autoRefresh" checked /> AUTO-REFRESH</label>
       </div>
       <div class="table-wrap">
         <table id="srcTable">
           <thead>
             <tr>
-              <th>NAMA</th><th>STATUS</th><th>CODEC</th><th>MODE</th>
-              <th>RTSP URL</th><th class="num">VIEWERS</th><th>AKSI</th>
+              <th>NAME</th><th>STATUS</th><th>CODEC</th><th>MODE</th>
+              <th>RTSP URL</th><th class="num">VIEWERS</th><th>ACTIONS</th>
             </tr>
           </thead>
           <tbody id="srcBody">
-            <tr><td colspan="7" class="empty">Memuat…</td></tr>
+            <tr><td colspan="7" class="empty">Loading…</td></tr>
           </tbody>
         </table>
       </div>
     </section>
-  </main>
+  
+  <!-- ABOUT -->
+  <section class="panel about-panel">
+    <div class="panel-head about-head" id="aboutToggle">
+      <h2>ABOUT <span class="about-arrow">▶</span></h2>
+    </div>
+    <div id="aboutBody" class="about-body" hidden>
+      <div class="about-item">
+        <span class="about-label">SOURCE CODE</span>
+        <a href="https://github.com/chandramaulana/hls-to-rtsp-1" target="_blank" rel="noopener">github.com/chandramaulana/hls-to-rtsp-1</a>
+      </div>
+      <div class="about-item">
+        <span class="about-label">BUILD</span>
+        <span>2026-06-21 02:46 UTC · <code class="git-sha">4c96ea0</code></span>
+      </div>
+      <div class="about-item">
+        <span class="about-label">VERSION</span>
+        <span>2.0-dev</span>
+      </div>
+    </div>
+  </section>
+</main>
 
   <!-- MODAL -->
   <div id="modalOverlay" class="overlay" hidden>
@@ -107,6 +184,6 @@
   <!-- TOAST -->
   <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

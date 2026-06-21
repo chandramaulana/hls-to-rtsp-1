@@ -1,13 +1,14 @@
-"""FastAPI app: API CRUD sumber HLS + dashboard statis + watchdog background task."""
+"""FastAPI app: API CRUD sumber + upload file MP4 + dashboard statis + watchdog."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import database as db
@@ -21,7 +22,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("gateway")
 
-# Lokasi frontend (relatif terhadap repo). Dapat di-override via FRONTEND_DIR.
 _DEFAULT_FRONTEND = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 )
@@ -31,12 +31,13 @@ FRONTEND_DIR = os.environ.get("FRONTEND_DIR", _DEFAULT_FRONTEND)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    os.makedirs(settings.UPLOADS_DIR, exist_ok=True)
     log.info("DB siap di %s", settings.DB_PATH)
-    # Rekonsiliasi: daftarkan ulang stream di go2rtc dari konfigurasi tersimpan.
+    log.info("Uploads dir: %s", settings.UPLOADS_DIR)
     try:
         await service.reconcile()
         log.info("rekonsiliasi go2rtc selesai")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.error("rekonsiliasi gagal: %s", e)
 
     task = None
@@ -53,7 +54,7 @@ async def lifespan(app: FastAPI):
                 pass
 
 
-app = FastAPI(title="HLS→RTSP Gateway", version="1.0", lifespan=lifespan)
+app = FastAPI(title="HLS→RTSP Gateway", version="2.0", lifespan=lifespan)
 
 
 # ---- API ----
@@ -120,8 +121,45 @@ async def delete_source(id: str):
         raise HTTPException(404, "sumber tidak ditemukan")
 
 
+# ---- Upload MP4 ----
+_ALLOWED_EXT = {".mp4", ".mov", ".avi", ".mkv", ".ts", ".m4v"}
+_MAX_UPLOAD = 50 * 1024 * 1024  # 50 MB
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename or ".mp4")[1].lower()
+    if ext not in _ALLOWED_EXT:
+        raise HTTPException(400, f"ekstensi tidak didukung: {ext} (terima: {', '.join(_ALLOWED_EXT)})")
+
+    # Generate unique filename, simpan nama asli untuk display
+    stem = str(uuid.uuid4())[:12]
+    safe_name = f"{stem}{ext}"
+    dst = os.path.join(settings.UPLOADS_DIR, safe_name)
+
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD:
+        raise HTTPException(413, f"file terlalu besar ({(len(content)/1024/1024):.1f}MB). Maks 50MB")
+
+    with open(dst, "wb") as f:
+        f.write(content)
+
+    log.info("upload: %s → %s (%d bytes)", file.filename, dst, len(content))
+
+    return JSONResponse({
+        "status": "ok",
+        "file_path": dst,
+        "file_name": file.filename,
+        "size": len(content),
+    })
+
+
+# ---- Sajikan file upload via /uploads/ (untuk preview dll) ----
+if os.path.isdir(settings.UPLOADS_DIR):
+    app.mount("/uploads", StaticFiles(directory=settings.UPLOADS_DIR), name="uploads")
+
+
 # ---- Frontend statis ----
-# Sajikan dashboard di root. Mount paling akhir agar tidak menutupi rute /api.
 if os.path.isdir(FRONTEND_DIR):
     @app.get("/")
     async def index():

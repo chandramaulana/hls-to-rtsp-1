@@ -32,6 +32,9 @@ class Settings:
     # Kapasitas
     MAX_TRANSCODE: int = _int("MAX_TRANSCODE", 12)  # batas konkurensi transcode (Orin NX)
 
+    # Lokasi upload file MP4
+    UPLOADS_DIR: str = os.environ.get("UPLOADS_DIR", "/app/uploads")
+
     # ffprobe timeout (detik)
     FFPROBE_TIMEOUT: int = _int("FFPROBE_TIMEOUT", 20)
 

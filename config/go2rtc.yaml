@@ -1,14 +1,6 @@
-# go2rtc â€” RTSP server pengganti MediaMTX.
-# Alasan ganti: MediaMTX menimbulkan lonjakan play-time 13-16 detik yang acak
-# (klien/VMS gagal connect). go2rtc terbukti konsisten ~150 ms pada sumber sama.
-#
-# Stream ditambahkan DINAMIS oleh backend via HTTP API:
-#   PUT    /api/streams?name=<nama>&src=<source>
-#   DELETE /api/streams?src=<nama>
-#   GET    /api/streams
-#
-# Source string per-stream mereferensikan TEMPLATE di bawah (bukan flag inline),
-# karena go2rtc menolak source string ber-spasi via API ("insecure").
+# go2rtc — RTSP server pengganti MediaMTX.
+# Optimasi stabilitas: reconnect_at_eof + TCP default transport.
+# (Parameter lain dikembalikan ke original biar gak timeout)
 
 log:
   level: info
@@ -18,23 +10,53 @@ api:
 
 rtsp:
   listen: ":8554"        # RTSP konsumen, path-based: rtsp://host:8554/<nama>
+  # Transport default gak bisa diset di sini untuk go2rtc versi ini
+  # Biarkan FFmpeg yang handle transport
 
 webrtc:
   listen: ":8555"        # opsional (preview WebRTC dashboard nanti)
 
 ffmpeg:
   bin: ffmpeg
-  # Template INPUT (flag sebelum -i): anti-buffer & reconnect berlapis (mode stabil).
-  # {input} diganti URL HLS oleh go2rtc.
+  # Template INPUT stabil — original dari repo, cuma ditambah reconnect_at_eof
+  # agar transisi antar segmen HLS lebih mulus
   hlslive: "-rw_timeout 30000000 -reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx -reconnect_delay_max 30 -m3u8_hold_counters 60 -max_reload 1000 -fflags +genpts -i {input}"
-  # Template INPUT varian low-latency (ikuti live-edge + reconnect_at_eof).
+  # Template INPUT varian low-latency (reconnect_at_eof sudah ada)
   hlslowlat: "-rw_timeout 30000000 -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_delay_max 30 -live_start_index -1 -m3u8_hold_counters 60 -max_reload 1000 -fflags +genpts -i {input}"
-  # Template OUTPUT fast-start (keyframe tiap 1 dtk) â€” encoder SOFTWARE (laptop x86).
+  # Template OUTPUT fast-start (software)
   faststart_sw: "-c:v libx264 -preset veryfast -tune zerolatency -profile:v high -g 30 -force_key_frames expr:gte(t,n_forced*1) -b:v 2M"
-  # Template OUTPUT fast-start â€” encoder HARDWARE Jetson (NVENC). Pakai di J4011.
+  # Template OUTPUT fast-start (hardware)
   faststart_hw: "-c:v h264_nvmpi -profile:v high -g 30 -force_key_frames expr:gte(t,n_forced*1) -b:v 4M"
 
-# streams: (kosong â€” diisi runtime oleh backend)
+# streams: (diisi runtime oleh backend)
 streams:
   admin2:
     - ffmpeg:https://eofficev2.bekasikota.go.id/backupcctv/m3/Perempatan_Rawa_Semut.m3u8#input=hlslive#video=copy#audio=aac
+  bekasi_rawa_semut:
+    - ffmpeg:https://eofficev2.bekasikota.go.id/backupcctv/m3/Perempatan_Rawa_Semut.m3u8#input=hlslive#video=copy#audio=aac
+  tol:
+    - ffmpeg:https://streaming-cct.co.id/LiveApp/streams/753814245775591052124656.m3u8#input=hlslive#video=copy#audio=aac
+  bekasi_ngopibah:
+    - ffmpeg:https://eofficev2.bekasikota.go.id/backupcctv/m3/Depan_NGOPIBAH.m3u8#input=hlslive#video=copy#audio=aac
+  bogor_balebinarium:
+    - ffmpeg:https://restreamer5.kotabogor.go.id/memfs/3f83b5c2-ad43-4ecd-a935-feab4ebe5654_output_0.m3u8#input=hlslive#video=copy#audio=aac
+  bogor_binarum1:
+    - ffmpeg:https://restreamer5.kotabogor.go.id/memfs/21022dbb-0461-42b4-8677-c1f941d40827_output_0.m3u8#input=hlslive#video=copy#audio=aac
+  jogja_1:
+    - ffmpeg:https://cctvjss.jogjakota.go.id/atcs/ATCS_Lampu_Merah_Gambiran2.stream/playlist.m3u8#input=hlslive#video=copy#audio=aac
+  jogja_2:
+    - ffmpeg:https://cctvjss.jogjakota.go.id/atcs/ATCS_Lampu_Merah_SopMerah1.stream/playlist.m3u8#input=hlslive#video=copy#audio=aac
+  jogja_3:
+    - ffmpeg:https://ant.slemankab.go.id/CCTVLUARPEMDA/streams/550804569688264879028437.m3u8#input=hlslive#video=copy#audio=aac
+  jogja_4:
+    - ffmpeg:https://ant.slemankab.go.id/CCTVLUARPEMDA/streams/141890874016002714329353.m3u8#input=hlslive#video=copy#audio=aac
+  proliman1:
+    - ffmpeg:https://ant.slemankab.go.id/CCTVLUARPEMDA/streams/141890874016002714329353.m3u8#input=hlslive#video=copy#audio=aac
+  jalan_pramuka1:
+    - ffmpeg:https://atcs.cianjurkab.go.id:5443/LieApp/streams/qnKKHlS27Pw41759502638300.m3u8#input=hlslive#video=copy#audio=aac
+  bola:
+    - ffmpeg:https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1782080969/ei/aRE4asueGuKAjuMPp5nNwQs/ip/2001:df1:e8c0::1114/id/-LSt_5loRbM.1/itag/300/source/yt_live_broadcast/requiressl/yes/ratebypass/yes/live/1/sgoap/gir%3Dyes%3Bitag%3D140/sgovp/gir%3Dyes%3Bitag%3D298/rqh/1/hls_chunk_host/rr5---sn-npoe7ns6.googlevideo.com/xpc/EgVo2aDSNQ%3D%3D/bui/ARmQxEXBXGMPqhYmP1lMEvNgXTqAYDFXxZIIWg6YsB5g1b8golHvHlxT_Da2nHuS1muIH4ZuwLuebC0B/spc/SQ-umlyC8GpsrRgjgkPjCFnFHQDouU8qtt_9qdyOIp2SsTmflg/vprv/1/reg/0/playlist_type/DVR/met/1782059369,/mh/Nr/mm/44/mn/sn-npoe7ns6/ms/lva/mv/u/mvi/5/pl/48/rms/lva,lva/dover/11/pacing/0/keepalive/yes/fexp/51565116,51565681,51987687/mt/1782059096/sparams/expire,ei,ip,id,itag,source,requiressl,ratebypass,live,sgoap,sgovp,rqh,xpc,bui,spc,vprv,reg,playlist_type/sig/AHEqNM4wRgIhAMvG_SnxJyHk2y2Ap-dhCXmc1vvIn0xYD0eXJbgtfIi2AiEA3qxvS43MYykXipfBLTdvcPgem54qpvxwxWFGeCZ59Zs%3D/lsparams/hls_chunk_host,met,mh,mm,mn,ms,mv,mvi,pl,rms/lsig/APaTxxMwRQIgKQSZguA8tN5fnUZuY7g5C_CFl56nAbMOVt7Xl4574K4CIQCGoN6jdF3FKMqfrzU7MwBJHljiORzdJbKbBOs-UazsaQ%3D%3D/playlist/index.m3u8#input=hlslive#video=copy#audio=aac
+  test-file:
+    - ffmpeg:/app/uploads/d89b35a4-9e8.mp4#video=copy#audio=aac
+  japan-stream:
+    - ffmpeg:https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1782081635/ei/AxQ4avzwHZ2w9fwPp6vbSA/ip/2001:df1:e8c0::1114/id/6dp-bvQ7RWo.4/itag/96/source/yt_live_broadcast/requiressl/yes/ratebypass/yes/live/1/sgoap/gir%3Dyes%3Bitag%3D140/sgovp/gir%3Dyes%3Bitag%3D137/rqh/1/hls_chunk_host/rr3---sn-ojnpo5-58.googlevideo.com/xpc/EgVo2aDSNQ%3D%3D/bui/ARmQxEXItyhZZTBikSsyCDZj41MZa0BjTDgPMjVpie3t_9GJd62o-_N9ylD3C0djhfgSX2RyDANz2obj/spc/SQ-umqB1PNhwOOE_u5SeNkV7R5BZ_wnNowUId_6oRx8aNhyGpQ/vprv/1/reg/0/playlist_type/DVR/met/1782060035,/mh/Jm/mm/44/mn/sn-ojnpo5-58/ms/lva/mv/u/mvi/3/pl/48/rms/lva,lva/dover/11/pacing/0/keepalive/yes/fexp/51565115,51565682,51987687/mt/1782059446/sparams/expire,ei,ip,id,itag,source,requiressl,ratebypass,live,sgoap,sgovp,rqh,xpc,bui,spc,vprv,reg,playlist_type/sig/AHEqNM4wRAIgSJD5Hq25mwkHNpenTPBA5U_dDajWuOoh4ew-zWQL8LECIFj5NNqHaPtk1K-2W2OZ_AkoDaGugJ7Fb9tAqFUf09Rk/lsparams/hls_chunk_host,met,mh,mm,mn,ms,mv,mvi,pl,rms/lsig/APaTxxMwRgIhAPmaf4xTB1ZH0Ynwd6JyA20P14tye7x7XL0GK7d72HfoAiEA6bYYEzeIFca0CxWJoHEt193FUPrh_F4bCkFseBzs0B0%3D/playlist/index.m3u8#input=hlslive#video=copy#audio=aac

@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS sources (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
     hls_url         TEXT NOT NULL,
+    original_url    TEXT,
+    source_type     TEXT NOT NULL DEFAULT 'hls',
+    file_path       TEXT,
     mode            TEXT NOT NULL DEFAULT 'auto',
     active_mode     TEXT,
     bitrate         INTEGER,
@@ -32,15 +35,23 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 """
 
+# Kolom yang perlu ditambahkan ke tabel lama (migration incremental)
+_MIGRATE_COLUMNS = [
+    ("low_latency", "ALTER TABLE sources ADD COLUMN low_latency INTEGER NOT NULL DEFAULT 0"),
+    ("fast_start", "ALTER TABLE sources ADD COLUMN fast_start INTEGER NOT NULL DEFAULT 0"),
+    ("original_url", "ALTER TABLE sources ADD COLUMN original_url TEXT"),
+    ("source_type", "ALTER TABLE sources ADD COLUMN source_type TEXT NOT NULL DEFAULT 'hls'"),
+    ("file_path", "ALTER TABLE sources ADD COLUMN file_path TEXT"),
+]
+
 
 def _migrate() -> None:
     """Tambah kolom baru pada DB lama (idempoten)."""
     cur = _c().execute("PRAGMA table_info(sources)")
     cols = {r["name"] for r in cur.fetchall()}
-    if "low_latency" not in cols:
-        _c().execute("ALTER TABLE sources ADD COLUMN low_latency INTEGER NOT NULL DEFAULT 0")
-    if "fast_start" not in cols:
-        _c().execute("ALTER TABLE sources ADD COLUMN fast_start INTEGER NOT NULL DEFAULT 0")
+    for col_name, sql in _MIGRATE_COLUMNS:
+        if col_name not in cols:
+            _c().execute(sql)
     _c().commit()
 
 

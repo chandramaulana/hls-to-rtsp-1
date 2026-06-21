@@ -4,7 +4,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import re
 
 
@@ -32,12 +32,20 @@ class Status(str, Enum):
     stopped = "stopped"
 
 
+class SourceType(str, Enum):
+    hls = "hls"            # URL HLS biasa / YouTube
+    file = "file"          # file MP4 yang diupload (looping)
+
+
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 
 class SourceCreate(BaseModel):
     name: str = Field(..., description="Slug unik, dipakai sebagai path RTSP")
-    hls_url: str
+    hls_url: str = Field("", description="URL HLS atau path file (diisi backend untuk file source)")
+    original_url: Optional[str] = Field(None, description="URL asli dari YouTube (jika auto-resolve)")
+    source_type: SourceType = SourceType.hls
+    file_path: Optional[str] = Field(None, description="Path file MP4 di server (untuk file source)")
     mode: Mode = Mode.auto
     bitrate: Optional[int] = Field(None, description="kbps untuk transcode; null = ikuti sumber")
     audio: Audio = Audio.aac
@@ -53,6 +61,15 @@ class SourceCreate(BaseModel):
         "(untuk sumber GOP-panjang yang lambat saat di-play). Menambah beban encode.",
     )
 
+    @model_validator(mode="after")
+    def _validate_url_by_type(self):
+        """Validasi hls_url tergantung source_type: file bebas, hls harus http(s)."""
+        if self.source_type != "file":
+            url = self.hls_url.strip()
+            if not (url.startswith("http://") or url.startswith("https://")):
+                raise ValueError("URL harus diawali http:// atau https://")
+        return self
+
     @field_validator("name")
     @classmethod
     def _slug(cls, v: str) -> str:
@@ -63,17 +80,12 @@ class SourceCreate(BaseModel):
             )
         return v
 
-    @field_validator("hls_url")
-    @classmethod
-    def _url(cls, v: str) -> str:
-        v = v.strip()
-        if not (v.startswith("http://") or v.startswith("https://")):
-            raise ValueError("hls_url harus diawali http:// atau https://")
-        return v
-
 
 class SourceUpdate(BaseModel):
     hls_url: Optional[str] = None
+    original_url: Optional[str] = None
+    source_type: Optional[SourceType] = None
+    file_path: Optional[str] = None
     mode: Optional[Mode] = None
     bitrate: Optional[int] = None
     audio: Optional[Audio] = None
@@ -81,21 +93,15 @@ class SourceUpdate(BaseModel):
     low_latency: Optional[bool] = None
     fast_start: Optional[bool] = None
 
-    @field_validator("hls_url")
-    @classmethod
-    def _url(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        v = v.strip()
-        if not (v.startswith("http://") or v.startswith("https://")):
-            raise ValueError("hls_url harus diawali http:// atau https://")
-        return v
-
 
 class SourceOut(BaseModel):
     id: str
     name: str
     hls_url: str
+    original_url: Optional[str] = None
+    source_type: SourceType = SourceType.hls
+    file_path: Optional[str] = None
+    file_name: Optional[str] = None          # nama file asli (untuk display)
     mode: Mode
     active_mode: Optional[str] = None        # copy/transcode aktual yang dipilih
     target_codec: str = "h264"
